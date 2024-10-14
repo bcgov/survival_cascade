@@ -13,18 +13,19 @@ fix_dates <- function(tbbl){
                               event_date)
            )
 }
-level_time_and_status <- function(tbbl, max_obs, start, end, greater_than){
-  #'this function first tests to see if there is a level for the trade...
-  #'if so it calls function to calculate the status and time
-  if(max_obs>greater_than){
+level_time_and_status <- function(tbbl, max_obs, start, end, cutoff){
+  #'this function tests to see if there is a level for the trade...
+  #'if so it calls function time_and_status
+  if(max_obs>cutoff){
     time_and_status(tbbl, start, end)
   }else{
-    #' if not it returns an empty tibble
+    #' otherwise it returns an empty tibble
     tibble()
   }
+  #'e.g. a one-level trade has max_obs=3 (registration, level_1, completion)
+  #'so when cutoff=3 we calculate time and status only for trades that have 2 or more levels.
 }
 time_and_status <- function(tbbl, start, end){
-  #browser()
   tbbl|>
     mutate(status=case_when(is.na(get(end)) & !is.na(get(start))~0,
                             !is.na(get(end))~1,
@@ -53,12 +54,12 @@ nested <- tbbl|>
   group_by(max_obs)|>
   nest()|>
   mutate(data=map(data, ~pivot_wider(.x, names_from = event, values_from = event_date)),
-         level1=map2(data, max_obs, level_time_and_status, "Registration", "Level 1", 2),
-         level2=map2(data, max_obs, level_time_and_status, "Level 1", "Level 2", 3),
-         level3=map2(data, max_obs, level_time_and_status, "Level 2", "Level 3", 4),
-         level4=map2(data, max_obs, level_time_and_status, "Level 3", "Level 4", 5)
+         level1=map2(data, max_obs, level_time_and_status, "Registration", "Level 1", cutoff=2), #max_obs>cutoff=2 for all trades
+         level2=map2(data, max_obs, level_time_and_status, "Level 1", "Level 2", cutoff=3), #max_obs>cutoff=3 for some trades
+         level3=map2(data, max_obs, level_time_and_status, "Level 2", "Level 3", cutoff=4), #max_obs>cutoff=4 for some trades
+         level4=map2(data, max_obs, level_time_and_status, "Level 3", "Level 4", cutoff=5) #max_obs>cutoff=5 for some trades
          )
-
+#calculate time and status for completion
 nested <- nested|>
   full_join(tibble(max_obs=3:6,
                    completion=list(time_and_status(nested$data[nested$max_obs==3][[1]], "Level 1", "Completion"),
@@ -69,37 +70,13 @@ nested <- nested|>
                    )
             )|>
   ungroup()|>
-  select(-max_obs, -data)
-
-level1 <- nested|>
-  select(level1)|>
-  unnest(level1)|>
-  group_by(trade_desc)|>
+  select(-data)|>
+  pivot_longer(cols = -max_obs, names_to = "level", values_to = "data")|>
+  unnest(data)|>
+  group_by(max_obs, level, trade_desc)|>
   nest()
 
-level2 <- nested|>
-  select(level2)|>
-  unnest(level2)|>
-  group_by(trade_desc)|>
-  nest()
 
-level3 <- nested|>
-  select(level3)|>
-  unnest(level3)|>
-  group_by(trade_desc)|>
-  nest()
-
-level4 <- nested|>
-  select(level4)|>
-  unnest(level4)|>
-  group_by(trade_desc)|>
-  nest()
-
-completion <- nested|>
-  select(completion)|>
-  unnest(completion)|>
-  group_by(trade_desc)|>
-  nest()
 
 
 
