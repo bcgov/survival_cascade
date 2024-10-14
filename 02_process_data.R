@@ -1,5 +1,6 @@
 library(tidyverse)
 library(here)
+library(survival)
 #functions
 fix_dates <- function(tbbl){
   #'this function addresses issue that levels prior to registration may have event_date that are either missing
@@ -39,6 +40,28 @@ time_and_status <- function(tbbl, start, end){
     na.omit()
 }
 
+survfit_wrapper <- function(tbbl) {
+  survfit(Surv(time, status) ~ 1, tbbl)
+}
+
+get_joint <- function(mod_lst) {
+  # calculate the joint probability of survival thus far and completion now: P(S and C)= P(S)*P(C|S)
+  tibble(
+    haz_rate = c(diff(mod_lst$cumhaz), 0),
+    surv = mod_lst$surv,
+    time = mod_lst$time
+  ) |>
+    mutate(joint = haz_rate * surv)
+}
+
+expected_delay <- function(tbbl){
+  # weighted mean of delay
+  tbbl|>
+    mutate(joint_sum_to_one=joint/sum(joint))|> #adjust probabilities for non-completions.
+    summarize(mean_delay_year=sum(time*joint_sum_to_one)/12)|>
+    pull(mean_delay_year)
+}
+
 #read in some fake data (for now)--------------------------
 fake <- read_csv(here("out","fake_data.csv"))
 #'Possible pre-apprenticeship levels are either missing their dates, or have dates prior to registration:
@@ -74,9 +97,12 @@ nested <- nested|>
   pivot_longer(cols = -max_obs, names_to = "level", values_to = "data")|>
   unnest(data)|>
   group_by(max_obs, level, trade_desc)|>
-  nest()
-
-
+  nest()|>
+  mutate(km_model=map(data, survfit_wrapper),
+         surv_dat = map(km_model, get_joint),
+         weighted_mean_completion_years = map_dbl(surv_dat, expected_delay),
+         prob_completion = map_dbl(surv_dat, function(x) 1-min(x$surv))
+  )
 
 
 
