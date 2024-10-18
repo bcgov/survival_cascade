@@ -18,12 +18,16 @@ possible_dates <- seq.Date(floor_date(today()-years(8), unit = "month"),
                            floor_date(today()+years(1), unit = "month"),
                            by = "m")
 
-stc_plus_sbt<- read_excel(here("data",
+which_trades<- read_excel(here("data",
                                "New_Apprenticeship_Registrations_May_2024.xlsx"),
                           na = "NULL")|>
   select(Trade, STC_Trades, Functional_Trades_Group)|>
   filter(STC_Trades=="Y"| Functional_Trades_Group=="Structural Building Trades")|>
-  distinct()|>
+  distinct()
+
+write_csv(which_trades, here("out","which_trades.csv"))
+
+stc_plus_sbt <- which_trades|>
   pull(Trade)
 
 trade_desc <- rep(stc_plus_sbt, 100)
