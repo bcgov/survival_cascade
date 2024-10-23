@@ -1,59 +1,65 @@
+#libraries-----------------------
 library(tidyverse)
 library(readxl)
 library(here)
-#functions-------------------------------------
-
-fake_the_data <- function(num_events, max_obs){
+#constants---------------------
+nobs <- 320 # number of observations per trade
+noise <- 1 # to investigate how noise influences results
+current_month <- floor_date(today(), unit = "month")
+possible_reg <- seq.Date(ymd("2016/01/01"), current_month-years(6), by = "month") #ensures dates before current month
+#functions------------------------
+add_level_dates <- function(max_obs, tbbl){
   num_levels <- max_obs-2
-  level_names <- paste("Level", 1:num_levels)
-  event <- c("Registration", level_names, "Completion")
-  event_date <- sample(possible_dates, size = max_obs)|>
-    sort()
-  tibble(event=event, event_date=event_date)|>
-    head(n=num_events)|>
-    filter(event_date<today())
+  tbbl|>
+    mutate(level1_date=if_else(unique_key %% 2 == 0, reg_date+years(1), NA),
+           level2_date=if_else(unique_key %% 4 == 0 & num_levels>1, reg_date+years(2), NA),
+           level3_date=if_else(unique_key %% 8 == 0 & num_levels>2, reg_date+years(3), NA),
+           level4_date= if_else(unique_key %% 16==0 & num_levels>3, reg_date+years(4), NA)
+    )
 }
-
-possible_dates <- seq.Date(floor_date(today()-years(8), unit = "month"),
-                           floor_date(today()+years(1), unit = "month"),
-                           by = "m")
-
-which_trades<- read_excel(here("data",
-                               "New_Apprenticeship_Registrations_May_2024.xlsx"),
-                          na = "NULL")|>
+add_completion_date <- function(max_obs, tbbl){
+  divide_by <- 2^(max_obs-1)
+  add_years <- max_obs-1
+  tbbl|>
+    mutate(completion_date=if_else(unique_key %% divide_by==0, reg_date+years(add_years), NA))
+}
+#read data-----------------------
+stc_plus_sbt<- read_excel(here("data", "New_Apprenticeship_Registrations_May_2024.xlsx"), na = "NULL")|>
   select(Trade, STC_Trades, Functional_Trades_Group)|>
   filter(STC_Trades=="Y"| Functional_Trades_Group=="Structural Building Trades")|>
-  distinct()
-
-write_csv(which_trades, here("out","which_trades.csv"))
-
-stc_plus_sbt <- which_trades|>
+  distinct()|>
   pull(Trade)
 
-trade_desc <- rep(stc_plus_sbt, 100)
-unique_key <- seq(1:length(trade_desc))
-
-tbbl <- tibble(unique_key=unique_key, trade_desc=trade_desc)
-
-#get the levels for each trade--------------------------------
-
-max_observations <- read_excel(here("data",
-                           "Apprenticeship Technical Training Levels by Trade (May2024).xlsx"))|>
+max_observations <- read_excel(here("data", "Apprenticeship Technical Training Levels by Trade (May2024).xlsx"))|>
   filter(Trade_Desc %in% stc_plus_sbt)|>
   select(trade_desc=Trade_Desc, max_obs=`Number of Technical Training Levels`)|>
   mutate(max_obs=max_obs+2) # add in the registration date and the completion date
 
 write_csv(max_observations, here("out","max_observations.csv"))
 
-full_join(tbbl, max_observations)|>
-  group_by(unique_key)|>
-  mutate(num_events=sample(c(1:max_obs, rep(max_obs,3)), size=1),
-         events=map2(num_events, max_obs, fake_the_data),
-         last_observed=floor_date(today(), unit="month")
-         )|>
-  select(-max_obs, -num_events)|>
-  unnest(events)|>
-  write_csv(here("out","fake_data.csv"))
+#create fake data--------------------
+temp <- tibble(unique_key = seq(1:(nobs*length(stc_plus_sbt))),
+               trade_desc = rep(stc_plus_sbt, nobs),
+               reg_date = sample(possible_reg, size=length(stc_plus_sbt)*nobs, replace = TRUE),
+               last_observed = current_month
+               )|>
+  full_join(max_observations)|>
+  group_by(max_obs)|>
+  nest()|>
+  mutate(data=map2(max_obs, data, add_level_dates),
+         data=map2(max_obs, data, add_completion_date))|>
+  unnest(data)|>
+  ungroup()|>
+  select(-max_obs)
+
+temp <- temp|>
+  mutate(level1_date=level1_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE)),
+         level2_date=level2_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE)),
+         level3_date=level3_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE)),
+         level4_date=level4_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE))
+  )
+
+write_csv(temp, here("out","fake_data.csv"))
 
 
 

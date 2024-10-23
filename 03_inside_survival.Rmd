@@ -1,0 +1,178 @@
+---
+title: "Completion Curves for Apprenticeships"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{css}
+table {
+    font-size: 12px; /* Adjust the size as needed */
+}
+```
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(here)
+library(survival)
+library(ggfortify)
+
+nested_with_summary <- read_rds(here("out", "nested_with_summary.rds"))|>
+  mutate(trade_desc=str_remove_all(trade_desc,",")) #commas in facet labels screw up annotation
+t_and_s <- read_rds(here("out", "time_and_status.rds"))|>
+  mutate(trade_desc=str_remove_all(trade_desc,","))#commas in facet labels screw up annotation
+levs <- unique(t_and_s$level)
+trades <- unique(t_and_s$trade_desc)
+trade_surv <- function(trade){
+  filtered <- t_and_s|>
+    filter(trade_desc==trade)
+  filtered_fit <- survfit(Surv(time, status) ~ level, data = filtered)
+  plt <- survminer::ggsurvplot(filtered_fit, 
+                               filtered, 
+                               fun="event", 
+                               ylim = c(0, 1))
+  plt$plot+
+    facet_wrap(~factor(level, levels=c('level1', 
+                                       'level2', 
+                                       'level3', 
+                                       'level4', 
+                                       'completion', 
+                                      'journeyperson')))+
+     theme_gray()+
+    theme(legend.position = "none")+
+    labs(x="Time in months",
+         y="Probability of Completion",
+         title=paste("Completion Curves for", trade))+
+    theme(text=element_text(size=15))
+}
+
+level_surv <- function(lev){
+  filtered <- t_and_s|>
+    filter(level==lev)
+  filtered_fit <- survfit(Surv(time, status) ~ trade_desc, data = filtered)
+  plt <- survminer::ggsurvplot(filtered_fit, 
+                               filtered,
+                               fun="event", 
+                               ylim = c(0, 1))+
+    labs(x="Time in months",
+         y="Probability of Completion",
+         title=paste("Completion Curves for", lev))
+  plt$plot+facet_wrap(~trade_desc)+
+    theme_gray()+
+    theme(legend.position = "none")+
+    theme(text=element_text(size=15))
+}
+
+```
+
+# By Trade
+
+## Inputs {.sidebar}
+
+```{r}
+selectInput(
+  "trade",
+  "Select a trade: ",
+  trades,
+  selected = "Carpenter"
+)
+
+base_table <- reactive({
+  nested_with_summary|>
+    filter(trade_desc==input$trade,
+           level!="journeyperson")|>
+    ungroup()|>
+    select(level, probability, years)
+})
+
+trade_text <- reactive({
+  nested_with_summary|>
+    filter(trade_desc==input$trade)|>
+    select(level, years, probability)|>
+    mutate(label = paste0("Prob(Complete) = ", 
+                       probability,
+                       "\n E[time (years)] = ",
+                       round(years, 2)))
+})
+```
+
+#### Levels:
+
+```{r}
+renderTable({
+  base_table()
+})
+```
+
+- **probability** is the probability of completing, conditional on being "at risk" of completing.  
+
+- **years** is the expected number of years to complete, conditional on completion.
+
+#### Journeyperson:
+
+```{r}
+renderTable({
+base_table()|>
+    summarize(level="Total",
+              probability=as.character(round(prod(probability),5)), #as.character to show all digits...
+              years=sum(years))
+})  
+```
+
+## Column
+
+### 
+
+```{r, fig.retina=2}
+renderPlot({
+  trade_surv(input$trade)+
+    geom_text(
+    data    = trade_text(),
+    mapping = aes(x = Inf, y = Inf, label = label),
+    hjust   = 1,
+    vjust   = +1.5
+    )
+})
+```
+
+# By Level
+
+## Inputs {.sidebar}
+
+```{r}
+selectInput(
+  "level",
+  "Select a level: ",
+  levs,
+  selected = levs[1]
+)
+
+level_text <- reactive({
+  nested_with_summary|>
+    filter(level==input$level)|>
+    select(trade_desc, years, probability)|>
+    mutate(label=paste0("Prob(Complete) = ", 
+                       round(probability, 2),
+                       "\n E[time (years)] = ",
+                       round(years, 2)))
+})
+```
+
+## Column
+
+### 
+
+```{r, fig.retina=2}
+renderPlot({
+  level_surv(input$level)+
+    geom_text(
+    data    = level_text(),
+    mapping = aes(x = Inf, y = Inf, label = label),
+    hjust   = 1,
+    vjust   = +1.5
+    )
+})
+```
