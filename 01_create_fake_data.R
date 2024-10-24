@@ -4,7 +4,7 @@ library(readxl)
 library(here)
 #constants---------------------
 nobs <- 320 # number of observations per trade
-noise <- 1 # to investigate how noise influences results
+std_dev <- 1.5 #add noise to how long level takes to complete
 current_month <- floor_date(today(), unit = "month")
 possible_reg <- seq.Date(ymd("2016/01/01"), current_month-years(6), by = "month") #ensures dates before current month
 #functions------------------------
@@ -18,8 +18,8 @@ add_level_dates <- function(max_obs, tbbl){
     )
 }
 add_completion_date <- function(max_obs, tbbl){
-  divide_by <- 2^(max_obs-1)
-  add_years <- max_obs-1
+  divide_by <- 2^(max_obs-1) #e.g. if max_obs=4 (2 levels), divide_by=8 -> half of those who did level 2 complete
+  add_years <- max_obs-1 #if they complete, completion occurs 1 year after final level.
   tbbl|>
     mutate(completion_date=if_else(unique_key %% divide_by==0, reg_date+years(add_years), NA))
 }
@@ -53,10 +53,10 @@ temp <- tibble(unique_key = seq(1:(nobs*length(stc_plus_sbt))),
   select(-max_obs)
 
 temp <- temp|>
-  mutate(level1_date=level1_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE)),
-         level2_date=level2_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE)),
-         level3_date=level3_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE)),
-         level4_date=level4_date+months(sample(c(-noise,noise), size=nrow(temp), replace=TRUE))
+  mutate(level1_date=level1_date+months(round(rnorm(nrow(temp), sd=std_dev))),
+         level2_date=level2_date+months(round(rnorm(nrow(temp), sd=std_dev))),
+         level3_date=level3_date+months(round(rnorm(nrow(temp), sd=std_dev))),
+         level4_date=level4_date+months(round(rnorm(nrow(temp), sd=std_dev)))
   )
 
 write_csv(temp, here("out","fake_data.csv"))

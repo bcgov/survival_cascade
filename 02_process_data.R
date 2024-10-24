@@ -49,7 +49,7 @@ survfit_wrapper <- function(tbbl) {
 
 get_joint <- function(mod_lst) {
   # calculate the joint probability of survival thus far and completion now: P(S and C)= P(S)*P(C|S)
-  # I discovered that kaplan-meier data doesn't make sense in some cases... code below fixes.
+  # Data doesn't make sense in some cases (for our purposes)... code below fixes.
   if(mod_lst$cumhaz[1]!=0 | mod_lst$surv[1]!=1){ #if survival curve doesn't start at surv=1...
     mod_lst$cumhaz=c(0, mod_lst$cumhaz) #at time =0 cumulative hazard should be 0
     mod_lst$surv=c(1, mod_lst$surv) #at time=0 the survival probability should be 1.

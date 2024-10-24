@@ -18,7 +18,6 @@ library(flexdashboard)
 library(tidyverse)
 library(here)
 library(survival)
-library(ggfortify)
 
 nested_with_summary <- read_rds(here("out", "nested_with_summary.rds"))|>
   mutate(trade_desc=str_remove_all(trade_desc,",")) #commas in facet labels screw up annotation
@@ -33,7 +32,10 @@ trade_surv <- function(trade){
   plt <- survminer::ggsurvplot(filtered_fit, 
                                filtered, 
                                fun="event", 
-                               ylim = c(0, 1))
+                               ylim = c(0, 1),
+                               break.time.by=12,
+                               xscale="m_y"
+                               )
   plt$plot+
     facet_wrap(~factor(level, levels=c('level1', 
                                        'level2', 
@@ -43,7 +45,7 @@ trade_surv <- function(trade){
                                       'journeyperson')))+
      theme_gray()+
     theme(legend.position = "none")+
-    labs(x="Time in months",
+    labs(x="Time in years",
          y="Probability of Completion",
          title=paste("Completion Curves for", trade))+
     theme(text=element_text(size=15))
