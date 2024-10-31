@@ -1,73 +1,38 @@
 ---
-title: "Completion Curves for Apprenticeships"
-output: 
+title: "Fake Completion Curves for Apprenticeships"
+output:
   flexdashboard::flex_dashboard:
-    orientation: columns
+    orientation: rows
     vertical_layout: fill
 runtime: shiny
+resource_files:
+- out/nested_with_summary.rds
+- out/time_and_status.rds
 ---
 
 ```{css}
 table {
-    font-size: 12px; /* Adjust the size as needed */
+    font-size: 15px; /* Adjust the size as needed */
 }
 ```
 
 ```{r setup, include=FALSE}
+#libraries----------------------------------
 library(flexdashboard)
 library(tidyverse)
 library(here)
 library(survival)
-
+#functions--------------------------------------
+source("functions.R")
+#read in the data---------------------------------------
+state_prob_plots <- read_rds(here("out","state_prob_plots.rds"))
 nested_with_summary <- read_rds(here("out", "nested_with_summary.rds"))|>
   mutate(trade_desc=str_remove_all(trade_desc,",")) #commas in facet labels screw up annotation
 t_and_s <- read_rds(here("out", "time_and_status.rds"))|>
   mutate(trade_desc=str_remove_all(trade_desc,","))#commas in facet labels screw up annotation
 levs <- unique(t_and_s$level)
 trades <- unique(t_and_s$trade_desc)
-trade_surv <- function(trade){
-  filtered <- t_and_s|>
-    filter(trade_desc==trade)
-  filtered_fit <- survfit(Surv(time, status) ~ level, data = filtered)
-  plt <- survminer::ggsurvplot(filtered_fit, 
-                               filtered, 
-                               fun="event", 
-                               ylim = c(0, 1),
-                               break.time.by=12,
-                               xscale="m_y"
-                               )
-  plt$plot+
-    facet_wrap(~factor(level, levels=c('level1', 
-                                       'level2', 
-                                       'level3', 
-                                       'level4', 
-                                       'completion', 
-                                      'journeyperson')))+
-     theme_gray()+
-    theme(legend.position = "none")+
-    labs(x="Time in years",
-         y="Probability of Completion",
-         title=paste("Completion Curves for", trade))+
-    theme(text=element_text(size=15))
-}
-
-level_surv <- function(lev){
-  filtered <- t_and_s|>
-    filter(level==lev)
-  filtered_fit <- survfit(Surv(time, status) ~ trade_desc, data = filtered)
-  plt <- survminer::ggsurvplot(filtered_fit, 
-                               filtered,
-                               fun="event", 
-                               ylim = c(0, 1))+
-    labs(x="Time in months",
-         y="Probability of Completion",
-         title=paste("Completion Curves for", lev))
-  plt$plot+facet_wrap(~trade_desc)+
-    theme_gray()+
-    theme(legend.position = "none")+
-    theme(text=element_text(size=15))
-}
-
+eras <- unique(t_and_s$era)
 ```
 
 # By Trade
@@ -82,61 +47,113 @@ selectInput(
   selected = "Carpenter"
 )
 
+
 base_table <- reactive({
   nested_with_summary|>
     filter(trade_desc==input$trade,
            level!="journeyperson")|>
     ungroup()|>
-    select(level, probability, years)
+    select(level, era, probability, years)|>
+    arrange(era)
 })
 
-trade_text <- reactive({
-  nested_with_summary|>
-    filter(trade_desc==input$trade)|>
-    select(level, years, probability)|>
-    mutate(label = paste0("Prob(Complete) = ", 
-                       probability,
-                       "\n E[time (years)] = ",
-                       round(years, 2)))
-})
-```
-
-#### Levels:
-
-```{r}
-renderTable({
-  base_table()
-})
-```
-
-- **probability** is the probability of completing, conditional on being "at risk" of completing.  
-
-- **years** is the expected number of years to complete, conditional on completion.
-
-#### Journeyperson:
-
-```{r}
-renderTable({
-base_table()|>
-    summarize(level="Total",
-              probability=as.character(round(prod(probability),5)), #as.character to show all digits...
+totals <- reactive({
+  base_table()|>
+    group_by(era)|>
+    summarize(level="Journey-person",
+              probability=prod(probability), 
               years=sum(years))
-})  
+})
+
+trade_summaries <- reactive({
+  bind_rows(base_table(), totals())
+})
+
+trade_state_plots <- reactive({
+  state_prob_plots|>
+    filter(trade_desc==input$trade)
+})
+
 ```
 
-## Column
+-  There are 5 tabs on this page:
+-   The first tab gives the completion curves: the probability of completing a level in terms of time since registration (for level 1 and journeyperson) or completion of the previous level (all other levels).
+-   The second tab is a table of the completion probabilities.
+-   The third tab is a table of the expected durations.
+-   The fourth tab describes how to go from survival curves to state probabilities.
+-   The fifth tab is an area plot of the state probabilities.
+-   The data is evenly split into 3 eras, allowing us to investigate whether completion patterns are stable or are changing over time. 
 
-### 
+Row {.tabset}
+-------------------------------------
+### Completion Curves
 
 ```{r, fig.retina=2}
 renderPlot({
-  trade_surv(input$trade)+
-    geom_text(
-    data    = trade_text(),
-    mapping = aes(x = Inf, y = Inf, label = label),
-    hjust   = 1,
-    vjust   = +1.5
-    )
+  trade_surv(input$trade, t_and_s)
+})
+```
+
+### Probability of Level Completion
+
+```{r}
+DT::renderDT(
+  trade_summaries()|>
+    select(-years)|>
+    pivot_wider(names_from = era, values_from = probability, names_prefix = "Era: ")|>
+    my_dt()
+)
+```
+
+### Expected Level Duration (years)
+
+```{r}
+DT::renderDT(
+  trade_summaries()|>
+    select(-probability)|>
+    pivot_wider(names_from = era, values_from = years, names_prefix = "Era: ")|>
+    my_dt()
+)
+```
+
+### Survival -> State Probabilities
+
+-   In order to estimate state probabilities we need to estimate the survival curves for each level from the time of registration: $survival(level)$  
+-   This is different than the completion curves, where time was measured from completion of preceeding level (with the exception of level 1 and journey-person).
+-   Note the following:
+$$
+\begin{eqnarray}
+1-survival(completion)&=&probability(completion)\\
+1-survival(level4) &=& probability(completion~or~level4)\\
+1-survival(level3) &=& probability(completion~or~level4~or~level3)\\
+1-survival(level2) &=& probability(completion~or~level4~or~level3~or~level2)\\
+1-survival(level1) &=& probability(completion~or~level4~or~level3~or~level2~or~level1)\\
+survival(level1) &=& probability(no~levels)
+\end{eqnarray}
+$$
+-   We can utilize the recursive nature of the above probabilities to derive the state probabilities:
+
+$$
+\begin{eqnarray}
+probability(completion)&=&1-survival(completion)\\
+probability(level4) &=& survival(completion)-survival(level4)\\
+probability(level3) &=& survival(level4)-survival(level3)\\
+probability(level2) &=& survival(level3)-survival(level2)\\
+probability(level1) &=& survival(level2)-survival(level1)\\
+probability(no~levels) &=& survival(level1) 
+\end{eqnarray}
+$$
+
+
+
+
+
+### State probability plots
+
+```{r, fig.retina=2}
+library(patchwork)
+renderPlot({
+  trade_state_plots()[[3]][[1]]+trade_state_plots()[[3]][[2]]+trade_state_plots()[[3]][[3]]+ plot_layout(guides = "collect")
 })
 ```
 
@@ -152,29 +169,60 @@ selectInput(
   selected = levs[1]
 )
 
-level_text <- reactive({
+level_summaries <- reactive({
   nested_with_summary|>
     filter(level==input$level)|>
-    select(trade_desc, years, probability)|>
-    mutate(label=paste0("Prob(Complete) = ", 
-                       round(probability, 2),
-                       "\n E[time (years)] = ",
-                       round(years, 2)))
+    ungroup()|>
+    select(trade_desc, era, probability, years)|>
+    arrange(era)
 })
 ```
 
-## Column
+-  There are 3 tabs on this page for `r renderUI({input$level})`.
+-   The first tab shows the probability of completing a level in terms of time since registration (for level 1 and journeyperson) or completion of the previous level (all other levels).
+-   The second tab is a table of the completion probabilities.
+-   The third tab is a table of the expected durations.
 
-### 
+
+
+Row {.tabset}
+-------------------------------------
+### Completion Curves
+
 
 ```{r, fig.retina=2}
 renderPlot({
-  level_surv(input$level)+
-    geom_text(
-    data    = level_text(),
-    mapping = aes(x = Inf, y = Inf, label = label),
-    hjust   = 1,
-    vjust   = +1.5
-    )
+  level_surv(input$level, t_and_s)
 })
 ```
+
+### Probability of Level Completion
+
+```{r}
+DT::renderDT(
+  level_summaries()|>
+    select(-years)|>
+    pivot_wider(names_from = era, values_from = probability, names_prefix = "Era: ")|>
+    my_dt()
+)
+```
+
+### Expected Level Duration (years)
+
+```{r}
+DT::renderDT(
+  level_summaries()|>
+    select(-probability)|>
+    pivot_wider(names_from = era, values_from = years, names_prefix = "Era: ")|>
+    my_dt()
+)
+```
+
+
+
+# The survival data
+
+```{r}
+my_dt(t_and_s, round_digits=0)
+```
+

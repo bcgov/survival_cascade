@@ -6,23 +6,9 @@ library(here)
 nobs <- 320 # number of observations per trade
 std_dev <- 1.5 #add noise to how long level takes to complete
 current_month <- floor_date(today(), unit = "month")
-possible_reg <- seq.Date(ymd("2016/01/01"), current_month-years(6), by = "month") #ensures dates before current month
+possible_reg <- seq.Date(ymd("1994/01/01"), current_month-years(6), by = "month") #ensures dates before current month
 #functions------------------------
-add_level_dates <- function(max_obs, tbbl){
-  num_levels <- max_obs-2
-  tbbl|>
-    mutate(level1_date=if_else(unique_key %% 2 == 0, reg_date+years(1), NA),
-           level2_date=if_else(unique_key %% 4 == 0 & num_levels>1, reg_date+years(2), NA),
-           level3_date=if_else(unique_key %% 8 == 0 & num_levels>2, reg_date+years(3), NA),
-           level4_date= if_else(unique_key %% 16==0 & num_levels>3, reg_date+years(4), NA)
-    )
-}
-add_completion_date <- function(max_obs, tbbl){
-  divide_by <- 2^(max_obs-1) #e.g. if max_obs=4 (2 levels), divide_by=8 -> half of those who did level 2 complete
-  add_years <- max_obs-1 #if they complete, completion occurs 1 year after final level.
-  tbbl|>
-    mutate(completion_date=if_else(unique_key %% divide_by==0, reg_date+years(add_years), NA))
-}
+source("functions.R")
 #read data-----------------------
 stc_plus_sbt<- read_excel(here("data", "New_Apprenticeship_Registrations_May_2024.xlsx"), na = "NULL")|>
   select(Trade, STC_Trades, Functional_Trades_Group)|>
