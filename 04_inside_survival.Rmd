@@ -1,5 +1,5 @@
 ---
-title: "Fake Completion Curves for Apprenticeships"
+title: "A peek inside the black box of apprenticeship"
 output:
   flexdashboard::flex_dashboard:
     orientation: rows
@@ -8,6 +8,7 @@ runtime: shiny
 resource_files:
 - out/nested_with_summary.rds
 - out/time_and_status.rds
+- out/state_prob_plots.rds
 ---
 
 ```{css}
@@ -22,6 +23,9 @@ library(flexdashboard)
 library(tidyverse)
 library(here)
 library(survival)
+library(shinyalert)
+library(conflicted)
+conflicts_prefer(dplyr::filter)
 #functions--------------------------------------
 source("functions.R")
 #read in the data---------------------------------------
@@ -32,7 +36,6 @@ t_and_s <- read_rds(here("out", "time_and_status.rds"))|>
   mutate(trade_desc=str_remove_all(trade_desc,","))#commas in facet labels screw up annotation
 levs <- unique(t_and_s$level)
 trades <- unique(t_and_s$trade_desc)
-eras <- unique(t_and_s$era)
 ```
 
 # By Trade
@@ -68,8 +71,11 @@ totals <- reactive({
 trade_summaries <- reactive({
   bind_rows(base_table(), totals())
 })
-
+#error message when state probability plot not present. 
 trade_state_plots <- reactive({
+  validate(
+      need(input$trade %in% unique(state_prob_plots$trade_desc), "For this trade there are not enough data points to create a meaningful state probability plot.")
+  )
   state_prob_plots|>
     filter(trade_desc==input$trade)
 })
@@ -82,7 +88,7 @@ trade_state_plots <- reactive({
 -   The third tab is a table of the expected durations.
 -   The fourth tab describes how to go from survival curves to state probabilities.
 -   The fifth tab is an area plot of the state probabilities.
--   The data is evenly split into 3 eras, allowing us to investigate whether completion patterns are stable or are changing over time. 
+-   The data is evenly split into 3 eras based on the date of registration. 
 
 Row {.tabset}
 -------------------------------------
@@ -100,7 +106,7 @@ renderPlot({
 DT::renderDT(
   trade_summaries()|>
     select(-years)|>
-    pivot_wider(names_from = era, values_from = probability, names_prefix = "Era: ")|>
+    pivot_wider(names_from = era, values_from = probability)|>
     my_dt()
 )
 ```
@@ -111,7 +117,7 @@ DT::renderDT(
 DT::renderDT(
   trade_summaries()|>
     select(-probability)|>
-    pivot_wider(names_from = era, values_from = years, names_prefix = "Era: ")|>
+    pivot_wider(names_from = era, values_from = years)|>
     my_dt()
 )
 ```
@@ -119,7 +125,7 @@ DT::renderDT(
 ### Survival -> State Probabilities
 
 -   In order to estimate state probabilities we need to estimate the survival curves for each level from the time of registration: $survival(level)$  
--   This is different than the completion curves, where time was measured from completion of preceeding level (with the exception of level 1 and journey-person).
+-   This is different than the completion curves, where time was measured from completion of preceding level (with the exception of level 1 and journey-person).
 -   Note the following:
 $$
 \begin{eqnarray}
@@ -144,16 +150,16 @@ probability(no~levels) &=& survival(level1)
 \end{eqnarray}
 $$
 
-
-
+-   Note that if the survival curves feature large jumps then the *estimated* state probabilities can be negative (obviously the *actual* state probabilities must be weakly positive.)
+-   Large jumps in the survival curves are more likely when sample sizes are small.  
+-   State probability plots are only provided for the trades where all state probabilities are weakly positive.
 
 
 ### State probability plots
 
 ```{r, fig.retina=2}
-library(patchwork)
 renderPlot({
-  trade_state_plots()[[3]][[1]]+trade_state_plots()[[3]][[2]]+trade_state_plots()[[3]][[3]]+ plot_layout(guides = "collect")
+  trade_state_plots()[["state_prob_plot"]]
 })
 ```
 
@@ -183,7 +189,10 @@ level_summaries <- reactive({
 -   The second tab is a table of the completion probabilities.
 -   The third tab is a table of the expected durations.
 
+Note:
 
+- Prior to the program change in April 2014, the Transport Trailer Technician program did not require any technical training, resulting in a value of 0 for technical training level.
+- Prior to August 2012, Residential Steep Roofer's technical training was Roofer's 3 levels of TT, then it changed to 1 level of Residential Steep Roofer.
 
 Row {.tabset}
 -------------------------------------
@@ -202,7 +211,7 @@ renderPlot({
 DT::renderDT(
   level_summaries()|>
     select(-years)|>
-    pivot_wider(names_from = era, values_from = probability, names_prefix = "Era: ")|>
+    pivot_wider(names_from = era, values_from = probability)|>
     my_dt()
 )
 ```
@@ -213,16 +222,7 @@ DT::renderDT(
 DT::renderDT(
   level_summaries()|>
     select(-probability)|>
-    pivot_wider(names_from = era, values_from = years, names_prefix = "Era: ")|>
+    pivot_wider(names_from = era, values_from = years)|>
     my_dt()
 )
 ```
-
-
-
-# The survival data
-
-```{r}
-my_dt(t_and_s, round_digits=0)
-```
-
